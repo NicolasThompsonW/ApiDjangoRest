@@ -32,5 +32,22 @@ class PersonalDateViewSerializer(serializers.Serializer):
     user_permissions = serializers.ListField()
     first_name = serializers.CharField()
     last_name = serializers.CharField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    new_password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        if data['new_password'] != data['confirm_password']:
+            raise serializers.ValidationError("Passwords do not match")
+        return data
+
+
+class RequestPasswordResetViewSerializer(serializers.Serializer):
+    email = serializers.EmailField()
     
-    
+    def validate_email(self, value):
+        if not User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("Email does not exist")
+        return value

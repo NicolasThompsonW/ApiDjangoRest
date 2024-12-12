@@ -7,11 +7,14 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.mail import send_mail
 from django.utils.crypto import get_random_string
-from drf_spectacular.utils import extend_schema, OpenApiExample, extend_schema_view
-from .serializers import RegisterResponseSerializer, RegisterSerializer, PersonalDateViewSerializer
-
+from drf_spectacular.utils import extend_schema, OpenApiExample, OpenApiResponse
+from .serializers import RegisterResponseSerializer, RegisterSerializer, PersonalDateViewSerializer, PasswordResetConfirmSerializer, RequestPasswordResetViewSerializer
 from drf_spectacular.utils import extend_schema, OpenApiExample
-from drf_spectacular.utils import OpenApiExample, extend_schema, OpenApiResponse
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from django.utils.encoding import force_bytes
+from django.contrib.auth.tokens import default_token_generator
+from django.contrib.auth.models import User
+
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
@@ -202,26 +205,52 @@ class RequestPasswordResetView(APIView):
     permission_classes = [AllowAny]
     @extend_schema(
         tags=["Authentication"],
-        summary="Request password reset"
+        summary="Request password reset",
+        request=RequestPasswordResetViewSerializer,
+        responses={
+            200: OpenApiResponse(
+                description="Password reset token sent to email",
+                
+                examples=[
+                    OpenApiExample(
+                        "Response Example",
+                        value={
+                            "Reset link sent to email": "http://localhost:8000/password_reset/uid/token/"
+                        }
+                    )
+                ]
+            ),
+            404: OpenApiResponse(
+                description="Email not found",
+                examples=[
+                    OpenApiExample(
+                        "Response Example",
+                        value={
+                            "error": "Email not found"
+                        }
+                    )
+                ]
+            ),
+        },
     )
 
     def post(self, request):
         email = request.data.get('email')
         try:
             user = User.objects.get(email=email)
-            reset_token = get_random_string(32)  # Genera un token aleatorio
-            user.profile.reset_token = reset_token
-            user.profile.save()
-
-            # Envía un email con el token
-            send_mail(
+            reset_token = default_token_generator.make_token(user)
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            
+            reset_link = f'http://localhost:8000/password_reset/{uid}/{reset_token}/'
+            
+            """ send_mail(
                 'Password Reset',
-                f'Use this token to reset your password: {reset_token}',
+                f'Use this link to reset your password: {reset_link}',
                 'from@example.com',
                 [email],
                 fail_silently=False,
-            )
-            return Response({'message': 'Password reset token sent to email'})
+            ) """
+            return Response({'message': 'Password reset link sent to email', 'reset_link': reset_link})
         except User.DoesNotExist:
             return Response({'error': 'Email not found'}, status=status.HTTP_404_NOT_FOUND)
         
@@ -229,24 +258,42 @@ class ConfirmPasswordResetView(APIView):
     permission_classes = [AllowAny]
     @extend_schema(
         tags=["Authentication"],
-        summary="Confirm password reset"
+        summary="Confirm password reset",
+        request=PasswordResetConfirmSerializer,
+        responses={
+            200: OpenApiResponse(
+                description="Password reset confirmed successfully",
+                examples=[
+                    OpenApiExample(
+                        "Response Example",
+                        value={"message": "Password reset confirmed successfully"}
+                    )
+                ]
+            ),
+            400: OpenApiResponse(
+                description="Bad request",
+                examples=[
+                    OpenApiExample(
+                        "Response Example",
+                        value={"error": "Invalid token or uid"}
+                    )
+                ]
+            )
+        }
     )
-
-    def post(self, request):
-        token = request.data.get('token')
-        new_password = request.data.get('new_password')
-        new_password_confirmation = request.data.get('new_password_confirmation')
-        
-        if not token or not new_password or not new_password_confirmation:
-            if new_password != new_password_confirmation:
-                return Response({'error': 'Passwords do not match'}, status=status.HTTP_400_BAD_REQUEST)
-            return Response({'error': 'All fields are required'}, status=status.HTTP_400_BAD_REQUEST)
-
+    def post(self, request, uidb64, token):
         try:
-            user = User.objects.get(profile__reset_token=token)
-            user.set_password(new_password)
-            user.profile.reset_token = None
-            user.profile.save()
-            return Response({'message': 'Password reset successfully'})
-        except User.DoesNotExist:
-            return Response({'error': 'Invalid token'}, status=status.HTTP_400_BAD_REQUEST)
+            uid = urlsafe_base64_decode(uidb64).decode()
+            user = User.objects.get(pk=uid)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            user = None
+
+        if user is not None and default_token_generator.check_token(user, token):
+            serializer = PasswordResetConfirmSerializer(data=request.data)
+            if serializer.is_valid():
+                user.set_password(serializer.validated_data['new_password'])
+                user.save()
+                return Response({"message": "Password reset confirmed successfully"}, status=status.HTTP_200_OK)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({"error": "Invalid token or uid"}, status=status.HTTP_400_BAD_REQUEST)
