@@ -7,41 +7,110 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.core.mail import send_mail
 from django.utils.crypto import get_random_string
+from drf_spectacular.utils import extend_schema, OpenApiExample, extend_schema_view
+from .serializers import RegisterResponseSerializer, RegisterSerializer, PersonalDateViewSerializer
 
+from drf_spectacular.utils import extend_schema, OpenApiExample
+from drf_spectacular.utils import OpenApiExample, extend_schema, OpenApiResponse
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
+
+    @extend_schema(
+        tags=["Authentication"],
+        summary="Register new user",
+        request=RegisterSerializer,
+        responses={
+            201: OpenApiResponse(
+                description="User created successfully",
+                response=RegisterResponseSerializer,
+                examples=[
+                    OpenApiExample(
+                        "Response Example",
+                        value={
+                            "message": "User created successfully",
+                            "username": "user123",
+                            "email": "example@example.com",
+                            "date_joined": "2021-07-16T15:00:00"
+                        }
+                    )
+                ]
+            ),
+        },
+    )
     def post(self, request):
-        username = request.data.get('username')
-        password = request.data.get('password')
-        email = request.data.get('email')
+        input_serializer = RegisterSerializer(data=request.data)
+        
+        if input_serializer.is_valid():
+            user = User.objects.create_user(
+                username=input_serializer.validated_data["username"],
+                password=input_serializer.validated_data["password"],
+                email=input_serializer.validated_data["email"]
+            )
+            output_serializer = RegisterResponseSerializer({
+                "message": "User created successfully",
+                "username": user.username,
+                "email": user.email,
+                "date_joined": user.date_joined
+            })
+            return Response(output_serializer.data, status=status.HTTP_201_CREATED)
 
-        if not username or not password:
-            return Response({'error': 'Username and password are required'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if User.objects.filter(username=username).exists():
-            return Response({'error': 'Username already exists'}, status=status.HTTP_400_BAD_REQUEST)
-
-        user = User.objects.create_user(username=username, password=password, email=email)
-        return Response({'message': 'User created successfully'}, status=status.HTTP_201_CREATED)
+        return Response(input_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class LoginView(TokenObtainPairView):
-    pass
+    @extend_schema(
+        tags=["Authentication"],
+        summary="Login user"
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
 
 #post method is already implemented in TokenObtainPairView
+
 class RefreshView(TokenRefreshView):
-    pass
+    
+    @extend_schema(
+        tags=["Authentication"],
+        summary="Refresh token"
+    )
+    def post(self, request, *args, **kwargs):
+        return super().post(request, *args, **kwargs)
+
 
 class PersonalDataView(APIView):
-    permission_classes = [IsAuthenticated]  # Solo usuarios autenticados pueden acceder
+    permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        tags=["Authentication"],
+        summary="Get personal data of the authenticated user",
+        responses={
+            200: OpenApiResponse(
+                description="Data of the authenticated user",
+                response=PersonalDateViewSerializer,
+                examples=[
+                    OpenApiExample(
+                        "Response Example",
+                        value={
+                            "username": "user123",
+                            "email": "example@example.com",
+                            "date_joined": "2021-07-16T15:00:00",
+                            "is_superuser": False,
+                            "user_permissions": ["view_user", "add_user"],
+                            "first_name": "John",
+                            "last_name": "Doe"
+                        }
+                    )
+                ]
+            ),
+        },
+    )
     def get(self, request):
         # Obtener al usuario autenticado
         user = request.user
 
         # Preparar los datos del usuario
-        user_data = {
+        user_data = PersonalDateViewSerializer({
             "username": user.username,
             "email": user.email,
             "date_joined": user.date_joined,
@@ -49,13 +118,16 @@ class PersonalDataView(APIView):
             "user_permissions": list(user.get_all_permissions()),
             "first_name": user.first_name if user.first_name else None,
             "last_name": user.last_name if user.last_name else None
-        }
+        }).data
 
-        return Response(user_data)
-    
+        return Response(user_data, status=status.HTTP_200_OK)
 
 class UpdateProfileView(APIView):
     permission_classes = [IsAuthenticated]
+    @extend_schema(
+        tags=["Authentication"],
+        summary="Update profile of the authenticated user"
+    )
 
     def put(self, request):
         user = request.user
@@ -71,10 +143,23 @@ class UpdateProfileView(APIView):
             user.last_name = lastName
 
         user.save()
-        return Response({'message': 'Profile updated successfully'})
+        return Response(PersonalDateViewSerializer({
+            "username": user.username,
+            "email": user.email,
+            "date_joined": user.date_joined,
+            "is_superuser": user.is_superuser,
+            "user_permissions": list(user.get_all_permissions()),
+            "first_name": user.first_name if user.first_name else None,
+            "last_name": user.last_name if user.last_name else None
+        }).data, status=status.HTTP_200_OK)
+        
     
 class ChangePasswordView(APIView):
     permission_classes = [IsAuthenticated]
+    @extend_schema(
+        tags=["Authentication"],
+        summary="Change password"
+    )
 
     def put(self, request):
         user = request.user
@@ -97,6 +182,10 @@ class ChangePasswordView(APIView):
 
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
+    @extend_schema(
+        tags=["Authentication"],
+        summary="Logout user"
+    )
 
     def post(self, request):
         try:
@@ -111,6 +200,10 @@ class LogoutView(APIView):
 ## Reset Password
 class RequestPasswordResetView(APIView):
     permission_classes = [AllowAny]
+    @extend_schema(
+        tags=["Authentication"],
+        summary="Request password reset"
+    )
 
     def post(self, request):
         email = request.data.get('email')
@@ -134,6 +227,10 @@ class RequestPasswordResetView(APIView):
         
 class ConfirmPasswordResetView(APIView):
     permission_classes = [AllowAny]
+    @extend_schema(
+        tags=["Authentication"],
+        summary="Confirm password reset"
+    )
 
     def post(self, request):
         token = request.data.get('token')
