@@ -36,8 +36,8 @@ This project is a Django-based API for user authentication, including features l
 1. **Clone the Repository**:
 
    ```bash
-   git clone <repository-url>
-   cd <repository-folder>
+   git clone https://github.com/NicolasThompsonW/ApiDjangoRest
+   cd ApiDjangoRest
    ```
 
 2. **Create a Virtual Environment**:
